@@ -33,10 +33,15 @@ export function useTelegram() {
     }
   };
 
-  const getBotUsername = (): string | null => {
+  const getBotUsername = (): string => {
     // Get bot username from start_param or hardcoded value
     // This should match the bot that has the mini app
     return 'Boys_Hubbot';
+  };
+
+  const getInitData = (): string | null => {
+    // @ts-ignore
+    return window.Telegram?.WebApp?.initData || null;
   };
 
   return {
@@ -45,5 +50,6 @@ export function useTelegram() {
     isReady: !!webApp,
     openTelegramLink,
     getBotUsername,
+    getInitData,
   };
 }

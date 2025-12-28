@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.telegram-bot]
 verify_jwt = false
+
+[functions.tg-support]
+verify_jwt = false

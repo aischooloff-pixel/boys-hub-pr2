@@ -7,6 +7,7 @@ import { PremiumModal } from '@/components/profile/PremiumModal';
 import { UserArticlesModal } from '@/components/profile/UserArticlesModal';
 import { ReputationHistoryModal } from '@/components/profile/ReputationHistoryModal';
 import { SocialLinksModal } from '@/components/profile/SocialLinksModal';
+import { SupportModal } from '@/components/profile/SupportModal';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -28,18 +29,10 @@ export default function Profile() {
   const [isArticlesOpen, setIsArticlesOpen] = useState(false);
   const [isRepHistoryOpen, setIsRepHistoryOpen] = useState(false);
   const [isSocialLinksOpen, setIsSocialLinksOpen] = useState(false);
+  const [isSupportOpen, setIsSupportOpen] = useState(false);
   const [userArticles, setUserArticles] = useState<Article[]>([]);
   const [articlesLoading, setArticlesLoading] = useState(true);
   const [reputation, setReputation] = useState(0);
-
-  const handleSupportClick = () => {
-    const botUsername = getBotUsername();
-    if (botUsername) {
-      openTelegramLink(`https://t.me/${botUsername}?start=support`);
-    } else {
-      toast.error('Не удалось открыть чат поддержки');
-    }
-  };
 
   // Load user's articles
   useEffect(() => {
@@ -368,7 +361,7 @@ export default function Profile() {
               </div>
             </div>
             <Button 
-              onClick={handleSupportClick} 
+              onClick={() => setIsSupportOpen(true)} 
               className="w-full gap-2"
               variant="outline"
             >
@@ -396,6 +389,7 @@ export default function Profile() {
         initialWebsite={profile.website || ''}
         onSave={handleSaveSocialLinks}
       />
+      <SupportModal isOpen={isSupportOpen} onClose={() => setIsSupportOpen(false)} />
     </div>
   );
 }
