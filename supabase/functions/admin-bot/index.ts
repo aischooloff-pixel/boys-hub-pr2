@@ -219,7 +219,7 @@ async function handleUsers(chatId: number, userId: number, page: number = 0, mes
 
   message += `\n🔍 Для поиска: <code>/search username</code> или <code>/search ID</code>`;
 
-  // Pagination buttons
+  // Pagination buttons - always show them
   const buttons: any[] = [];
   if (page > 0) {
     buttons.push({ text: '⬅️ Назад', callback_data: `users:${page - 1}` });
@@ -228,6 +228,7 @@ async function handleUsers(chatId: number, userId: number, page: number = 0, mes
     buttons.push({ text: 'Вперёд ➡️', callback_data: `users:${page + 1}` });
   }
 
+  // Always create keyboard even if no pagination needed
   const keyboard = {
     inline_keyboard: buttons.length > 0 ? [buttons] : [],
   };
@@ -252,21 +253,25 @@ async function handleSearch(chatId: number, userId: number, query: string) {
     return;
   }
 
+  // Clean query - remove @ if present
+  const cleanQuery = query.replace('@', '').trim();
+
   // Try to find by telegram_id or username
   let users;
-  const isNumeric = /^\d+$/.test(query);
+  const isNumeric = /^\d+$/.test(cleanQuery);
 
   if (isNumeric) {
+    // Use string comparison for bigint telegram_id
     const { data } = await supabase
       .from('profiles')
       .select('*')
-      .eq('telegram_id', parseInt(query));
+      .eq('telegram_id', cleanQuery);
     users = data;
   } else {
     const { data } = await supabase
       .from('profiles')
       .select('*')
-      .ilike('username', `%${query}%`);
+      .ilike('username', `%${cleanQuery}%`);
     users = data;
   }
 
@@ -349,8 +354,23 @@ async function handlePremium(chatId: number, userId: number) {
 async function handlePremiumGrant(callbackQuery: any, telegramId: string) {
   const { id, message } = callbackQuery;
 
+  console.log('Granting premium to telegram_id:', telegramId);
+
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 30);
+
+  // Use string comparison for bigint - don't parseInt
+  const { data: profile, error: findError } = await supabase
+    .from('profiles')
+    .select('id, telegram_id')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+
+  if (findError || !profile) {
+    console.error('Error finding profile:', findError);
+    await answerCallbackQuery(id, '❌ Пользователь не найден');
+    return;
+  }
 
   const { error } = await supabase
     .from('profiles')
@@ -358,7 +378,7 @@ async function handlePremiumGrant(callbackQuery: any, telegramId: string) {
       is_premium: true,
       premium_expires_at: expiresAt.toISOString()
     })
-    .eq('telegram_id', parseInt(telegramId));
+    .eq('id', profile.id);
 
   if (error) {
     console.error('Error granting premium:', error);
@@ -390,13 +410,28 @@ async function handlePremiumGrant(callbackQuery: any, telegramId: string) {
 async function handlePremiumRevoke(callbackQuery: any, telegramId: string) {
   const { id, message } = callbackQuery;
 
+  console.log('Revoking premium from telegram_id:', telegramId);
+
+  // Use string comparison for bigint - don't parseInt
+  const { data: profile, error: findError } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+
+  if (findError || !profile) {
+    console.error('Error finding profile:', findError);
+    await answerCallbackQuery(id, '❌ Пользователь не найден');
+    return;
+  }
+
   const { error } = await supabase
     .from('profiles')
     .update({ 
       is_premium: false,
       premium_expires_at: null
     })
-    .eq('telegram_id', parseInt(telegramId));
+    .eq('id', profile.id);
 
   if (error) {
     console.error('Error revoking premium:', error);
@@ -420,15 +455,23 @@ async function handlePremiumRevoke(callbackQuery: any, telegramId: string) {
 async function handlePremiumExtend(callbackQuery: any, telegramId: string) {
   const { id, message } = callbackQuery;
 
-  // Get current expiry
-  const { data: profile } = await supabase
+  console.log('Extending premium for telegram_id:', telegramId);
+
+  // Use string comparison for bigint - don't parseInt
+  const { data: profile, error: findError } = await supabase
     .from('profiles')
-    .select('premium_expires_at, is_premium')
-    .eq('telegram_id', parseInt(telegramId))
+    .select('id, premium_expires_at, is_premium')
+    .eq('telegram_id', telegramId)
     .maybeSingle();
 
+  if (findError || !profile) {
+    console.error('Error finding profile:', findError);
+    await answerCallbackQuery(id, '❌ Пользователь не найден');
+    return;
+  }
+
   let newExpiry: Date;
-  if (profile?.premium_expires_at && new Date(profile.premium_expires_at) > new Date()) {
+  if (profile.premium_expires_at && new Date(profile.premium_expires_at) > new Date()) {
     newExpiry = new Date(profile.premium_expires_at);
   } else {
     newExpiry = new Date();
@@ -441,7 +484,7 @@ async function handlePremiumExtend(callbackQuery: any, telegramId: string) {
       is_premium: true,
       premium_expires_at: newExpiry.toISOString()
     })
-    .eq('telegram_id', parseInt(telegramId));
+    .eq('id', profile.id);
 
   if (error) {
     console.error('Error extending premium:', error);
@@ -568,7 +611,7 @@ async function handleBroadcast(chatId: number, userId: number, text?: string) {
 ❌ Не доставлено: ${failed}`);
 }
 
-// Handle /questions command - show pending support questions
+// Handle /questions command - show pending support questions with inline buttons
 async function handleQuestions(chatId: number, userId: number) {
   if (!isAdmin(userId)) return;
 
@@ -590,33 +633,65 @@ async function handleQuestions(chatId: number, userId: number) {
     return;
   }
 
-  await sendAdminMessage(chatId, `❓ <b>Вопросы в поддержку (${questions.length}):</b>\n\n<i>Чтобы ответить на вопрос, используйте функцию "Ответить" (свайп влево) на сообщение с вопросом.</i>`);
+  // Create inline buttons for each question
+  const buttons = questions.map(q => {
+    const shortQuestion = q.question.length > 30 
+      ? q.question.substring(0, 30) + '...' 
+      : q.question;
+    return [{ text: `❓ ${shortQuestion}`, callback_data: `question:${q.id.substring(0, 8)}` }];
+  });
 
-  for (const q of questions) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('first_name, username')
-      .eq('telegram_id', q.user_telegram_id)
-      .maybeSingle();
+  const keyboard = {
+    inline_keyboard: buttons,
+  };
 
-    const message = `❓ <b>Вопрос #${q.id.substring(0, 8)}</b>
+  await sendAdminMessage(chatId, `❓ <b>Вопросы в поддержку (${questions.length}):</b>\n\n<i>Нажмите на вопрос, чтобы открыть его. Для ответа используйте функцию "Ответить" (свайп влево) на сообщение с вопросом.</i>`, { reply_markup: keyboard });
+}
+
+// Handle question view callback
+async function handleViewQuestion(callbackQuery: any, questionShortId: string) {
+  const { id, message, from } = callbackQuery;
+
+  const { data: question, error } = await supabase
+    .from('support_questions')
+    .select('id, user_telegram_id, question, created_at')
+    .ilike('id', `${questionShortId}%`)
+    .eq('status', 'pending')
+    .maybeSingle();
+
+  if (error || !question) {
+    await answerCallbackQuery(id, '❌ Вопрос не найден');
+    return;
+  }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('first_name, username')
+    .eq('telegram_id', question.user_telegram_id)
+    .maybeSingle();
+
+  const questionMessage = `❓ <b>Вопрос #${question.id.substring(0, 8)}</b>
 
 👤 <b>От:</b> ${profile?.first_name || 'User'} ${profile?.username ? `(@${profile.username})` : ''}
-🆔 <b>Telegram ID:</b> ${q.user_telegram_id}
+🆔 <b>Telegram ID:</b> ${question.user_telegram_id}
 
 📝 <b>Вопрос:</b>
-${q.question}
+${question.question}
 
-🕐 ${new Date(q.created_at).toLocaleString('ru-RU')}`;
+🕐 ${new Date(question.created_at).toLocaleString('ru-RU')}
 
-    const result = await sendAdminMessage(chatId, message);
-    
-    if (result.ok && result.result?.message_id) {
-      await supabase
-        .from('support_questions')
-        .update({ admin_message_id: result.result.message_id })
-        .eq('id', q.id);
-    }
+<i>Чтобы ответить, свайпните влево на это сообщение и напишите ответ.</i>`;
+
+  await answerCallbackQuery(id);
+  
+  const result = await sendAdminMessage(message.chat.id, questionMessage);
+  
+  // Save message ID for reply tracking
+  if (result.ok && result.result?.message_id) {
+    await supabase
+      .from('support_questions')
+      .update({ admin_message_id: result.result.message_id })
+      .eq('id', question.id);
   }
 }
 
@@ -852,6 +927,8 @@ async function handleCallbackQuery(callbackQuery: any) {
     await handlePremiumRevoke(callbackQuery, param);
   } else if (action === 'premium_extend') {
     await handlePremiumExtend(callbackQuery, param);
+  } else if (action === 'question') {
+    await handleViewQuestion(callbackQuery, param);
   }
 }
 
